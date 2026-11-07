@@ -1,0 +1,2 @@
+{"VendorID":2,"tpep_pickup_datetime":1785542451000,"tpep_dropoff_datetime":1785543730000,"passenger_count":1,"trip_distance":3.8,"RatecodeID":1,"store_and_fwd_flag":"N","PULocationID":114,"DOLocationID":143,"payment_type":1,"fare_amount":22.6,"extra":1,"mta_tax":0.5,"tip_amount":5.67,"tolls_amount":0,"improvement_surcharge":1,"total_amount":34.02,"congestion_surcharge":2.5,"Airport_fee":0,"cbd_congestion_fee":0.75,"request_source":null}
+
