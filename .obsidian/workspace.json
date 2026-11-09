@@ -205,6 +205,7 @@
   },
   "active": "6a7ed6e0bdbb18fd",
   "lastOpenFiles": [
+    "phase1_plots_v1.20.29.py",
     "phase1.pdf",
     "phase1_v1.25.34.pdf",
     "data_reports_monthly.csv",
@@ -217,7 +218,6 @@
     "hvfhv_2025_random_sample/~$sample.xlsx",
     "fhv_tripdata_2025-07.parquet",
     "hvfhv_2025_random_sample/sample.xlsx",
-    "hvfhv_2025_random_sample/5C01A200",
-    "hvfhv_2025_random_sample/sampling_manifest.json"
+    "hvfhv_2025_random_sample/5C01A200"
   ]
 }
