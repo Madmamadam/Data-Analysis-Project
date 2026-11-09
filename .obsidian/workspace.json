@@ -13,12 +13,26 @@
             "state": {
               "type": "markdown",
               "state": {
-                "file": "Untitled.md",
+                "file": "ideas.md",
                 "mode": "source",
                 "source": false
               },
               "icon": "lucide-file",
-              "title": "Untitled"
+              "title": "ideas"
+            }
+          },
+          {
+            "id": "42d9df9dc646d528",
+            "type": "leaf",
+            "state": {
+              "type": "markdown",
+              "state": {
+                "file": "short TODOs.md",
+                "mode": "source",
+                "source": false
+              },
+              "icon": "lucide-file",
+              "title": "short TODOs"
             }
           }
         ]
@@ -83,7 +97,8 @@
       }
     ],
     "direction": "horizontal",
-    "width": 300
+    "width": 300,
+    "collapsed": true
   },
   "right": {
     "id": "a25b46e69002d84e",
@@ -190,8 +205,19 @@
   },
   "active": "6a7ed6e0bdbb18fd",
   "lastOpenFiles": [
-    "hvfhv_2025_random_sample.zip",
-    "hvfhv_random_sample_colab (1).ipynb",
-    "Untitled.md"
+    "phase1.pdf",
+    "phase1_v1.25.34.pdf",
+    "data_reports_monthly.csv",
+    "taxi_zone_lookup (1).csv",
+    "README.md",
+    "short TODOs.md",
+    "hvfhv_2025_random_sample.csv",
+    "hvfhv_2024_random_sample.csv",
+    "ideas.md",
+    "hvfhv_2025_random_sample/~$sample.xlsx",
+    "fhv_tripdata_2025-07.parquet",
+    "hvfhv_2025_random_sample/sample.xlsx",
+    "hvfhv_2025_random_sample/5C01A200",
+    "hvfhv_2025_random_sample/sampling_manifest.json"
   ]
 }
