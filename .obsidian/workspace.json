@@ -11,28 +11,12 @@
             "id": "6a7ed6e0bdbb18fd",
             "type": "leaf",
             "state": {
-              "type": "markdown",
+              "type": "excalidraw",
               "state": {
-                "file": "ideas.md",
-                "mode": "source",
-                "source": false
+                "file": "phase 2/obsidians/phase2_dataAnalysis.excalidraw.md"
               },
-              "icon": "lucide-file",
-              "title": "ideas"
-            }
-          },
-          {
-            "id": "42d9df9dc646d528",
-            "type": "leaf",
-            "state": {
-              "type": "markdown",
-              "state": {
-                "file": "short TODOs.md",
-                "mode": "source",
-                "source": false
-              },
-              "icon": "lucide-file",
-              "title": "short TODOs"
+              "icon": "excalidraw-icon",
+              "title": "phase2_dataAnalysis.excalidraw"
             }
           }
         ]
@@ -199,11 +183,22 @@
       "daily-notes:Open today's daily note": false,
       "templates:Insert template": false,
       "command-palette:Open command palette": false,
-      "bases:Create new base": false
+      "bases:Create new base": false,
+      "obsidian-excalidraw-plugin:New drawing": false
     }
   },
   "active": "6a7ed6e0bdbb18fd",
   "lastOpenFiles": [
+    "phase 2/obsidians/attachment/Pasted image 20261117190854.png",
+    "phase 2/obsidians/phase2_dataAnalysis.excalidraw.md",
+    "Pasted image 20261117190854.png",
+    "obsidians/phase2_dataAnalysis.excalidraw.md",
+    "obsidians/attachment/Pasted image 20261117190854.png",
+    "obsidians/attachment",
+    "obsidians/atechment",
+    "obsidians/New folder",
+    "Untitled 1",
+    "Untitled",
     "phase1_plots_v1.20.29.py",
     "phase1.pdf",
     "phase1_v1.25.34.pdf",
@@ -211,12 +206,6 @@
     "taxi_zone_lookup (1).csv",
     "README.md",
     "short TODOs.md",
-    "hvfhv_2025_random_sample.csv",
-    "hvfhv_2024_random_sample.csv",
-    "ideas.md",
-    "hvfhv_2025_random_sample/~$sample.xlsx",
-    "fhv_tripdata_2025-07.parquet",
-    "hvfhv_2025_random_sample/sample.xlsx",
-    "hvfhv_2025_random_sample/5C01A200"
+    "ideas.md"
   ]
 }
