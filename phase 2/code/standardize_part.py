@@ -1,5 +1,3 @@
-"""Merge the phase 2 CSV files and write a separate standardized Parquet."""
-
 # Version 2.0
 from pathlib import Path
 
@@ -7,22 +5,8 @@ import numpy as np
 import pandas as pd
 import pyarrow as pa
 
+import config
 import phase2_io
-
-# Configuration
-REUSE_MERGED_PARQUET = True  # Set to False to rebuild the merge from the CSV files.
-CHUNK_ROWS = 100_000
-
-CODE_DIR = Path(__file__).resolve().parent
-RAW_DIR = CODE_DIR / "raw_datas"
-TEMP_DIR = CODE_DIR / "temp_file"
-MERGED_PARQUET = TEMP_DIR / "merged.parquet"
-WORKING_PARQUET = TEMP_DIR / "working.parquet"
-
-INPUT_2024 = "hvfhv_2024_oct-dec_2p5pct.csv"
-INPUT_2025 = "hvfhv_2025_2p5pct.csv"
-INPUT_2026 = "hvfhv_2026_jan-sep_2p5pct.csv"
-INPUT_FILES = (INPUT_2024, INPUT_2025, INPUT_2026)
 
 CONGESTION_FEE = "cbd_congestion_fee"
 CONVERSION_OK = "unit_conversion_ok"
@@ -31,59 +15,51 @@ STANDARDIZED_METADATA = b"tlc_unit_conversion"
 LICENSE_COLUMN = "hvfhs_license_num"
 TLC_LICENSES = ("HV0002", "HV0003", "HV0004", "HV0005")
 TIMESTAMP_COLUMNS = {
-    "request_datetime", "on_scene_datetime", "pickup_datetime", "dropoff_datetime",
+    "request_datetime",
+    "on_scene_datetime",
+    "pickup_datetime",
+    "dropoff_datetime",
 }
 TIMESTAMP_PARTS = ("year", "month", "day", "hour", "minute", "second")
-TLC_TIMESTAMP = r"[0-9]{4}-[0-9]{2}-[0-9]{2}[ T][0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]{1,9})?"
+TLC_TIMESTAMP = (
+    r"[0-9]{4}-[0-9]{2}-[0-9]{2}[ T][0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]{1,9})?"
+)
 FLAG_COLUMNS = {
-    "shared_request_flag", "shared_match_flag", "access_a_ride_flag", "wav_request_flag", "wav_match_flag",
+    "shared_request_flag",
+    "shared_match_flag",
+    "access_a_ride_flag",
+    "wav_request_flag",
+    "wav_match_flag",
 }
 INTEGER_COLUMNS = {
-    "PULocationID": pa.int32(), "DOLocationID": pa.int32(), "_sample_source_row": pa.int64(),
+    "PULocationID": pa.int32(),
+    "DOLocationID": pa.int32(),
+    "_sample_source_row": pa.int64(),
 }
 MEASUREMENT_COLUMNS = {
     "trip_miles": ("trip_km", 1.609344),
     "trip_time": ("trip_time_minutes", 1 / 60),
 }
 for name in (
-    "base_passenger_fare", "tolls", "bcf", "sales_tax", "congestion_surcharge",
-    "airport_fee", "tips", "driver_pay", CONGESTION_FEE, "_sample_weight",
+    "base_passenger_fare",
+    "tolls",
+    "bcf",
+    "sales_tax",
+    "congestion_surcharge",
+    "airport_fee",
+    "tips",
+    "driver_pay",
+    CONGESTION_FEE,
+    "_sample_weight",
 ):
     MEASUREMENT_COLUMNS[name] = (name, 1)
 
 CONVERTED_COLUMNS = TIMESTAMP_COLUMNS.union(
-    FLAG_COLUMNS, INTEGER_COLUMNS.keys(), MEASUREMENT_COLUMNS.keys(), {LICENSE_COLUMN},
+    FLAG_COLUMNS,
+    INTEGER_COLUMNS.keys(),
+    MEASUREMENT_COLUMNS.keys(),
+    {LICENSE_COLUMN},
 )
-
-
-def merge_csvs(raw_dir: Path, merged_path: Path, reuse_existing: bool) -> Path:
-    """Write the original CSV values to one Parquet, or reuse the existing merge."""
-    if reuse_existing and merged_path.is_file():
-        print(f"Reusing merged Parquet: {merged_path}")
-        return merged_path
-
-    headers = {name: phase2_io.read_csv_header(raw_dir / name) for name in INPUT_FILES}
-    # Use the 2025 column order first and append only new column names.
-    columns = headers[INPUT_2025] + headers[INPUT_2024] + headers[INPUT_2026]
-    columns = list(dict.fromkeys(columns))
-    schema = pa.schema([(name, pa.string()) for name in columns])
-
-    rows_from_2024 = 0
-    with phase2_io.write_parquet(merged_path, schema) as writer:
-        for name in INPUT_FILES:
-            print(f"Reading {name}", flush=True)
-            with phase2_io.read_csv_chunks(raw_dir / name, CHUNK_ROWS) as chunks:
-                for chunk in chunks:
-                    aligned = chunk.reindex(columns=columns, fill_value="")
-                    table = pa.Table.from_pandas(aligned, schema=schema, preserve_index=False)
-                    writer.write_table(table)
-                    if name == INPUT_2024:
-                        rows_from_2024 += len(chunk)
-        # The 2024 rows come first. Record their count in the footer for standardization.
-        writer.add_key_value_metadata({ROWS_2024_METADATA: str(rows_from_2024)})
-    print(f"Merged Parquet saved: {merged_path}")
-    return merged_path
-
 
 def _parse_integer(values: pd.Series, arrow_type: pa.DataType) -> pd.Series:
     # Extract the signed digits from a whole number such as 42 or 42.0.
@@ -176,7 +152,7 @@ def standardize_parquet(merged_path: Path, working_path: Path) -> Path:
     if merged_path == working_path:
         raise ValueError("Choose different paths for the merged and standardized Parquet.")
 
-    with phase2_io.read_parquet_batches(merged_path, CHUNK_ROWS) as (raw_schema, footer, batches):
+    with phase2_io.read_parquet_batches(merged_path, config.CHUNK_ROWS) as (raw_schema, footer, batches):
         metadata = dict(raw_schema.metadata or {})
         if STANDARDIZED_METADATA in metadata:
             raise ValueError(f"Expected a raw merge, but this file is already standardized: {merged_path}")
@@ -198,12 +174,3 @@ def standardize_parquet(merged_path: Path, working_path: Path) -> Path:
                 rows_left_from_2024 -= rows_from_2024
     print(f"Standardized Parquet saved: {working_path}")
     return working_path
-
-
-def main() -> None:
-    merged_path = merge_csvs(RAW_DIR, MERGED_PARQUET, REUSE_MERGED_PARQUET)
-    standardize_parquet(merged_path, WORKING_PARQUET)
-
-
-if __name__ == "__main__":
-    main()
