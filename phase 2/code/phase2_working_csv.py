@@ -1,8 +1,6 @@
-"""Build and standardize the phase 2 working Parquet."""
+"""Merge the phase 2 CSV files and write a separate standardized Parquet."""
 
-import argparse
-from collections.abc import Iterator
-from contextlib import closing
+# Version 2.0
 from pathlib import Path
 
 import numpy as np
@@ -11,26 +9,24 @@ import pyarrow as pa
 
 import phase2_io
 
-save_file = phase2_io.save_file
-
-
 # Configuration
-SAVE_WORKING_CSV = False  # Set to True to export the full working table to output.
+REUSE_MERGED_PARQUET = True  # Set to False to rebuild the merge from the CSV files.
 CHUNK_ROWS = 100_000
-PREVIEW_ROWS = 1_000
 
 CODE_DIR = Path(__file__).resolve().parent
 RAW_DIR = CODE_DIR / "raw_datas"
 TEMP_DIR = CODE_DIR / "temp_file"
-OUTPUT_DIR = CODE_DIR / "output"
+MERGED_PARQUET = TEMP_DIR / "merged.parquet"
 WORKING_PARQUET = TEMP_DIR / "working.parquet"
 
 INPUT_2024 = "hvfhv_2024_oct-dec_2p5pct.csv"
 INPUT_2025 = "hvfhv_2025_2p5pct.csv"
 INPUT_2026 = "hvfhv_2026_jan-sep_2p5pct.csv"
 INPUT_FILES = (INPUT_2024, INPUT_2025, INPUT_2026)
+
 CONGESTION_FEE = "cbd_congestion_fee"
 CONVERSION_OK = "unit_conversion_ok"
+ROWS_2024_METADATA = b"tlc_rows_from_2024"
 STANDARDIZED_METADATA = b"tlc_unit_conversion"
 LICENSE_COLUMN = "hvfhs_license_num"
 TLC_LICENSES = ("HV0002", "HV0003", "HV0004", "HV0005")
@@ -48,54 +44,50 @@ INTEGER_COLUMNS = {
 MEASUREMENT_COLUMNS = {
     "trip_miles": ("trip_km", 1.609344),
     "trip_time": ("trip_time_minutes", 1 / 60),
-    **{
-        name: (name, 1) for name in (
-            "base_passenger_fare", "tolls", "bcf", "sales_tax", "congestion_surcharge",
-            "airport_fee", "tips", "driver_pay", CONGESTION_FEE, "_sample_weight",
-        )
-    },
 }
-CONVERTED_COLUMNS = (
-    TIMESTAMP_COLUMNS | FLAG_COLUMNS | INTEGER_COLUMNS.keys() | MEASUREMENT_COLUMNS.keys() | {LICENSE_COLUMN}
+for name in (
+    "base_passenger_fare", "tolls", "bcf", "sales_tax", "congestion_surcharge",
+    "airport_fee", "tips", "driver_pay", CONGESTION_FEE, "_sample_weight",
+):
+    MEASUREMENT_COLUMNS[name] = (name, 1)
+
+CONVERTED_COLUMNS = TIMESTAMP_COLUMNS.union(
+    FLAG_COLUMNS, INTEGER_COLUMNS.keys(), MEASUREMENT_COLUMNS.keys(), {LICENSE_COLUMN},
 )
 
 
-def build_working_parquet(
-    raw_dir: Path = RAW_DIR,
-    working_parquet: Path = WORKING_PARQUET,
-    *,
-    chunk_rows: int = CHUNK_ROWS,
-) -> Path:
-    """Merge the inputs in source order without accumulating chunks in memory."""
-    headers = {name: phase2_io.read_csv_header(raw_dir / name) for name in INPUT_FILES}
-    columns = list(dict.fromkeys([
-        *headers[INPUT_2025], *headers[INPUT_2024], *headers[INPUT_2026], CONGESTION_FEE,
-    ]))
+def merge_csvs(raw_dir: Path, merged_path: Path, reuse_existing: bool) -> Path:
+    """Write the original CSV values to one Parquet, or reuse the existing merge."""
+    if reuse_existing and merged_path.is_file():
+        print(f"Reusing merged Parquet: {merged_path}")
+        return merged_path
 
-    # Keep the original text values for the later cleaning and type checks.
+    headers = {name: phase2_io.read_csv_header(raw_dir / name) for name in INPUT_FILES}
+    # Use the 2025 column order first and append only new column names.
+    columns = headers[INPUT_2025] + headers[INPUT_2024] + headers[INPUT_2026]
+    columns = list(dict.fromkeys(columns))
     schema = pa.schema([(name, pa.string()) for name in columns])
 
-    def merged_tables() -> Iterator[pa.Table]:
+    rows_from_2024 = 0
+    with phase2_io.write_parquet(merged_path, schema) as writer:
         for name in INPUT_FILES:
             print(f"Reading {name}", flush=True)
-            with phase2_io.read_csv_chunks(raw_dir / name, chunk_rows) as chunks:
+            with phase2_io.read_csv_chunks(raw_dir / name, CHUNK_ROWS) as chunks:
                 for chunk in chunks:
-                    if name == INPUT_2024:
-                        chunk[CONGESTION_FEE] = "-1"
                     aligned = chunk.reindex(columns=columns, fill_value="")
-                    yield pa.Table.from_pandas(aligned, schema=schema, preserve_index=False)
-
-    with phase2_io.staged_path(working_parquet.parent) as pending:
-        with closing(merged_tables()) as tables:
-            phase2_io.write_parquet_batches(pending, schema, tables)
-        phase2_io.replace_file(pending, working_parquet)
-    return working_parquet
+                    table = pa.Table.from_pandas(aligned, schema=schema, preserve_index=False)
+                    writer.write_table(table)
+                    if name == INPUT_2024:
+                        rows_from_2024 += len(chunk)
+        # The 2024 rows come first. Record their count in the footer for standardization.
+        writer.add_key_value_metadata({ROWS_2024_METADATA: str(rows_from_2024)})
+    print(f"Merged Parquet saved: {merged_path}")
+    return merged_path
 
 
 def _parse_integer(values: pd.Series, arrow_type: pa.DataType) -> pd.Series:
-    # Accept an integer written as 42.0 without round-tripping it through a float.
-    integer_text = values.where(values.str.fullmatch(r"[+-]?[0-9]+(?:\.0+)?", na=False))
-    integer_text = integer_text.str.replace(r"\.0+$", "", regex=True)
+    # Extract the signed digits from a whole number such as 42 or 42.0.
+    integer_text = values.str.extract(r"^([+-]?[0-9]+)(?:\.0+)?\Z", expand=False)
     numbers = pd.to_numeric(integer_text, errors="coerce", dtype_backend="numpy_nullable")
     limits = np.iinfo(arrow_type.to_pandas_dtype())
     if pd.api.types.is_integer_dtype(numbers.dtype):
@@ -114,19 +106,26 @@ def _parse_integer(values: pd.Series, arrow_type: pa.DataType) -> pd.Series:
     return pd.Series(map(parse_exact, integer_text), index=values.index, dtype="Int64")
 
 
-def _standardize_batch(batch: pa.RecordBatch) -> pa.RecordBatch:
+def _standardize_batch(batch: pa.RecordBatch, rows_from_2024: int = 0) -> pa.RecordBatch:
     """Convert known fields and flag rows where a nonempty value failed conversion."""
     names = []
     arrays = []
     conversion_ok = np.ones(batch.num_rows, dtype=bool)
 
-    for name, original in zip(batch.schema.names, batch.columns):
+    columns = list(zip(batch.schema.names, batch.columns))
+    if CONGESTION_FEE not in batch.schema.names:
+        empty_fee = pa.nulls(batch.num_rows, type=pa.string())
+        columns.append((CONGESTION_FEE, empty_fee))
+
+    for name, original in columns:
         if name not in CONVERTED_COLUMNS:
             names.append(name)
             arrays.append(original)
             continue
 
         text = pd.Series(original.to_pandas(), dtype="string").str.strip()
+        if name == CONGESTION_FEE and rows_from_2024:
+            text.iloc[:rows_from_2024] = "-1"
         values = text.mask(text.eq(""))
         missing = values.isna().to_numpy()
 
@@ -151,7 +150,9 @@ def _standardize_batch(batch: pa.RecordBatch) -> pa.RecordBatch:
             converted = _parse_integer(values, output_type)
         else:
             output_name, multiplier = MEASUREMENT_COLUMNS[name]
-            numbers = pd.to_numeric(values, errors="coerce").astype("float64") * multiplier
+            numbers = pd.to_numeric(values, errors="coerce").astype("float64")
+            if multiplier != 1:
+                numbers *= multiplier
             converted = numbers.where(np.isfinite(numbers))
             output_type = pa.float64()
 
@@ -170,68 +171,38 @@ def _standardize_batch(batch: pa.RecordBatch) -> pa.RecordBatch:
     return pa.RecordBatch.from_arrays(arrays, names=names)
 
 
-def standardize_working_parquet(working_parquet: Path, *, chunk_rows: int = CHUNK_ROWS) -> Path:
-    """Apply the unit conversions once and atomically replace the working Parquet."""
-    with phase2_io.staged_path(working_parquet.parent) as pending:
-        with phase2_io.read_parquet_batches(working_parquet, chunk_rows) as (raw_schema, batches):
-            metadata = raw_schema.metadata or {}
-            if STANDARDIZED_METADATA in metadata:
-                print("Working Parquet is already standardized.")
-                return working_parquet
+def standardize_parquet(merged_path: Path, working_path: Path) -> Path:
+    """Read the raw merge in batches and write a separate standardized Parquet."""
+    if merged_path == working_path:
+        raise ValueError("Choose different paths for the merged and standardized Parquet.")
 
-            empty = pa.RecordBatch.from_arrays(
-                [pa.array([], type=field.type) for field in raw_schema], schema=raw_schema,
-            )
-            schema = _standardize_batch(empty).schema
-            if len(schema.names) != len(set(schema.names)):
-                raise ValueError("A source column conflicts with a standardized column name.")
-            schema = schema.with_metadata({**metadata, STANDARDIZED_METADATA: b"1"})
-            phase2_io.write_parquet_batches(
-                pending, schema, (_standardize_batch(batch) for batch in batches),
-            )
-        phase2_io.replace_file(pending, working_parquet)
-    return working_parquet
+    with phase2_io.read_parquet_batches(merged_path, CHUNK_ROWS) as (raw_schema, footer, batches):
+        metadata = dict(raw_schema.metadata or {})
+        if STANDARDIZED_METADATA in metadata:
+            raise ValueError(f"Expected a raw merge, but this file is already standardized: {merged_path}")
+        rows_left_from_2024 = int(footer.get(ROWS_2024_METADATA, b"0"))
 
+        empty_columns = [pa.array([], type=field.type) for field in raw_schema]
+        empty_batch = pa.RecordBatch.from_arrays(empty_columns, schema=raw_schema)
+        schema = _standardize_batch(empty_batch).schema
+        if len(schema.names) != len(set(schema.names)):
+            raise ValueError("A source column conflicts with a standardized column name.")
+        metadata.pop(ROWS_2024_METADATA, None)
+        metadata[STANDARDIZED_METADATA] = b"1"
+        schema = schema.with_metadata(metadata)
 
-def export_working_csv(
-    working_parquet: Path = WORKING_PARQUET,
-    output_dir: Path = OUTPUT_DIR,
-    *,
-    preview: bool = False,
-) -> Path:
-    """Export all rows, or a small preview, without loading the whole table."""
-    return phase2_io.export_working_csv(
-        working_parquet,
-        output_dir,
-        preview=preview,
-        preview_rows=PREVIEW_ROWS,
-        chunk_rows=CHUNK_ROWS,
-    )
+        with phase2_io.write_parquet(working_path, schema) as writer:
+            for batch in batches:
+                rows_from_2024 = min(rows_left_from_2024, batch.num_rows)
+                writer.write_batch(_standardize_batch(batch, rows_from_2024))
+                rows_left_from_2024 -= rows_from_2024
+    print(f"Standardized Parquet saved: {working_path}")
+    return working_path
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__)
-    mode = parser.add_mutually_exclusive_group()
-    mode.add_argument(
-        "--preview", action="store_true",
-        help="Export the first 1,000 rows of the existing working Parquet for Excel.",
-    )
-    mode.add_argument(
-        "--standardize-existing", action="store_true",
-        help="Standardize the existing working Parquet without reading the original CSV files.",
-    )
-    args = parser.parse_args()
-
-    if args.preview:
-        print(f"Preview saved: {export_working_csv(preview=True)}")
-        return
-
-    working_parquet = WORKING_PARQUET if args.standardize_existing else build_working_parquet()
-    print("Standardizing units and field types.", flush=True)
-    standardize_working_parquet(working_parquet)
-    print(f"Working Parquet ready: {working_parquet}")
-    if SAVE_WORKING_CSV:
-        print(f"Full CSV saved: {export_working_csv(working_parquet)}")
+    merged_path = merge_csvs(RAW_DIR, MERGED_PARQUET, REUSE_MERGED_PARQUET)
+    standardize_parquet(merged_path, WORKING_PARQUET)
 
 
 if __name__ == "__main__":
