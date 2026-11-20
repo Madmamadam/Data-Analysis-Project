@@ -4,7 +4,7 @@ from pathlib import Path
 import pyarrow as pa
 
 import config
-import phase2_io
+import io_part
 
 
 def merge_csvs(raw_dir: Path, merged_path: Path, reuse_existing: bool) -> Path:
@@ -13,17 +13,17 @@ def merge_csvs(raw_dir: Path, merged_path: Path, reuse_existing: bool) -> Path:
         print(f"Reusing merged Parquet: {merged_path}")
         return merged_path
 
-    headers = {name: phase2_io.read_csv_header(raw_dir / name) for name in config.INPUT_FILES}
+    headers = {name: io_part.read_csv_header(raw_dir / name) for name in config.INPUT_FILES}
     # Use the 2025 column order first and append only new column names.
     columns = headers[config.INPUT_2025] + headers[config.INPUT_2024] + headers[config.INPUT_2026]
     columns = list(dict.fromkeys(columns))
     schema = pa.schema([(name, pa.string()) for name in columns])
 
     rows_from_2024 = 0
-    with phase2_io.write_parquet(merged_path, schema) as writer:
+    with io_part.write_parquet(merged_path, schema) as writer:
         for name in config.INPUT_FILES:
             print(f"Reading {name}", flush=True)
-            with phase2_io.read_csv_chunks(raw_dir / name, config.CHUNK_ROWS) as chunks:
+            with io_part.read_csv_chunks(raw_dir / name, config.CHUNK_ROWS) as chunks:
                 for chunk in chunks:
                     aligned = chunk.reindex(columns=columns, fill_value="")
                     table = pa.Table.from_pandas(
