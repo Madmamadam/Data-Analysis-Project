@@ -10,7 +10,6 @@ import phase2_io
 
 CONGESTION_FEE = "cbd_congestion_fee"
 CONVERSION_OK = "unit_conversion_ok"
-ROWS_2024_METADATA = b"tlc_rows_from_2024"
 STANDARDIZED_METADATA = b"tlc_unit_conversion"
 LICENSE_COLUMN = "hvfhs_license_num"
 TLC_LICENSES = ("HV0002", "HV0003", "HV0004", "HV0005")
@@ -156,14 +155,14 @@ def standardize_parquet(merged_path: Path, working_path: Path) -> Path:
         metadata = dict(raw_schema.metadata or {})
         if STANDARDIZED_METADATA in metadata:
             raise ValueError(f"Expected a raw merge, but this file is already standardized: {merged_path}")
-        rows_left_from_2024 = int(footer.get(ROWS_2024_METADATA, b"0"))
+        rows_left_from_2024 = int(footer.get(config.ROWS_2024_METADATA, b"0"))
 
         empty_columns = [pa.array([], type=field.type) for field in raw_schema]
         empty_batch = pa.RecordBatch.from_arrays(empty_columns, schema=raw_schema)
         schema = _standardize_batch(empty_batch).schema
         if len(schema.names) != len(set(schema.names)):
             raise ValueError("A source column conflicts with a standardized column name.")
-        metadata.pop(ROWS_2024_METADATA, None)
+        metadata.pop(config.ROWS_2024_METADATA, None)
         metadata[STANDARDIZED_METADATA] = b"1"
         schema = schema.with_metadata(metadata)
 

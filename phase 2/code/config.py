@@ -1,8 +1,9 @@
-from numpy.compat import Path
+from pathlib import Path
 
 # Configuration
 REUSE_MERGED_PARQUET = True  # Set to False to rebuild the merge from the CSV files.
 CHUNK_ROWS = 100_000
+ROWS_2024_METADATA = b"tlc_rows_from_2024"
 
 CODE_DIR = Path(__file__).resolve().parent
 RAW_DIR = CODE_DIR / "raw_datas"
