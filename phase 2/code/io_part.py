@@ -24,10 +24,10 @@ def read_csv_chunks(path: Path, chunk_rows: int):
 
 
 @contextmanager
-def read_parquet_batches(path: Path, chunk_rows: int):
+def read_parquet_batches(path: Path, chunk_rows: int, *, columns: list[str] | None = None):
     with pq.ParquetFile(path) as source:
         footer = source.metadata.metadata or {}
-        yield source.schema_arrow, footer, source.iter_batches(batch_size=chunk_rows)
+        yield source.schema_arrow, footer, source.iter_batches(batch_size=chunk_rows, columns=columns)
 
 
 @contextmanager

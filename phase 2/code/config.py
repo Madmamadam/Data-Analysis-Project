@@ -8,6 +8,8 @@ ROWS_2024_METADATA = b"tlc_rows_from_2024"
 CODE_DIR = Path(__file__).resolve().parent
 RAW_DIR = CODE_DIR / "raw_datas"
 TEMP_DIR = CODE_DIR / "temp_file"
+# Official NYC TLC taxi-zone lookup bundled for portable OD analysis.
+TAXI_ZONE_LOOKUP = CODE_DIR / "requirements" / "taxi_zone_lookup.csv"
 MERGED_PARQUET = TEMP_DIR / "merged.parquet"
 WORKING_PARQUET = TEMP_DIR / "working.parquet"
 

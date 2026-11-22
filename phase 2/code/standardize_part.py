@@ -12,7 +12,9 @@ CONGESTION_FEE = "cbd_congestion_fee"
 CONVERSION_OK = "unit_conversion_ok"
 STANDARDIZED_METADATA = b"tlc_unit_conversion"
 LICENSE_COLUMN = "hvfhs_license_num"
-TLC_LICENSES = ("HV0002", "HV0003", "HV0004", "HV0005")
+UBER_LICENSE = "HV0003"
+IS_UBER_COLUMN = "is Uber"
+TLC_LICENSES = ("HV0002", UBER_LICENSE, "HV0004", "HV0005")
 DROPPED_COLUMNS = {
     "dispatching_base_num",
     "originating_base_num",
@@ -86,6 +88,12 @@ def _parse_integer(values: pd.Series, arrow_type: pa.DataType) -> pd.Series:
     return pd.Series(map(parse_exact, integer_text), index=values.index, dtype="Int64")
 
 
+def parse_tlc_timestamp(values: pd.Series) -> pd.Series:
+    """Parse stripped local timestamp strings, using NaT for invalid values."""
+    local_time = values.where(values.str.fullmatch(TLC_TIMESTAMP, na=False))
+    return pd.to_datetime(local_time, format="ISO8601", errors="coerce")
+
+
 def _standardize_batch(batch: pa.RecordBatch, rows_from_2024: int = 0) -> pa.RecordBatch:
     """Convert known fields and flag rows where a nonempty value failed conversion."""
     names = []
@@ -96,6 +104,8 @@ def _standardize_batch(batch: pa.RecordBatch, rows_from_2024: int = 0) -> pa.Rec
     if CONGESTION_FEE not in batch.schema.names:
         empty_fee = pa.nulls(batch.num_rows, type=pa.string())
         columns.append((CONGESTION_FEE, empty_fee))
+    if LICENSE_COLUMN not in batch.schema.names:
+        columns.append((LICENSE_COLUMN, pa.nulls(batch.num_rows, type=pa.string())))
 
     for name, original in columns:
         if name in DROPPED_COLUMNS:
@@ -113,16 +123,14 @@ def _standardize_batch(batch: pa.RecordBatch, rows_from_2024: int = 0) -> pa.Rec
 
         if name == LICENSE_COLUMN:
             conversion_ok &= missing | values.isin(TLC_LICENSES).to_numpy()
-            for license_code in TLC_LICENSES:
-                indicator = values.eq(license_code).fillna(False).to_numpy(dtype=np.uint8)
-                names.append(f"{LICENSE_COLUMN}_{license_code}")
-                arrays.append(pa.array(indicator, type=pa.uint8()))
+            indicator = values.eq(UBER_LICENSE).fillna(False)
+            names.append(IS_UBER_COLUMN)
+            arrays.append(pa.array(indicator, type=pa.bool_()))
             continue
 
         output_name = name
         if name in TIMESTAMP_COLUMNS:
-            local_time = values.where(values.str.fullmatch(TLC_TIMESTAMP, na=False))
-            converted = pd.to_datetime(local_time, format="ISO8601", errors="coerce")
+            converted = parse_tlc_timestamp(values)
         elif name in FLAG_COLUMNS:
             converted = values.map({"Y": 1, "N": 0})
             output_type = pa.uint8()
