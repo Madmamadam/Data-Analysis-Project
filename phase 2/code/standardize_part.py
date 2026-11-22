@@ -13,6 +13,13 @@ CONVERSION_OK = "unit_conversion_ok"
 STANDARDIZED_METADATA = b"tlc_unit_conversion"
 LICENSE_COLUMN = "hvfhs_license_num"
 TLC_LICENSES = ("HV0002", "HV0003", "HV0004", "HV0005")
+DROPPED_COLUMNS = {
+    "dispatching_base_num",
+    "originating_base_num",
+    "_sample_weight",
+    "_sample_source_row",
+    "_sample_source_month",
+}
 TIMESTAMP_COLUMNS = {
     "request_datetime",
     "on_scene_datetime",
@@ -33,7 +40,6 @@ FLAG_COLUMNS = {
 INTEGER_COLUMNS = {
     "PULocationID": pa.int32(),
     "DOLocationID": pa.int32(),
-    "_sample_source_row": pa.int64(),
 }
 MEASUREMENT_COLUMNS = {
     "trip_miles": ("trip_km", 1.609344),
@@ -49,7 +55,6 @@ for name in (
     "tips",
     "driver_pay",
     CONGESTION_FEE,
-    "_sample_weight",
 ):
     MEASUREMENT_COLUMNS[name] = (name, 1)
 
@@ -93,6 +98,8 @@ def _standardize_batch(batch: pa.RecordBatch, rows_from_2024: int = 0) -> pa.Rec
         columns.append((CONGESTION_FEE, empty_fee))
 
     for name, original in columns:
+        if name in DROPPED_COLUMNS:
+            continue
         if name not in CONVERTED_COLUMNS:
             names.append(name)
             arrays.append(original)
@@ -116,7 +123,6 @@ def _standardize_batch(batch: pa.RecordBatch, rows_from_2024: int = 0) -> pa.Rec
         if name in TIMESTAMP_COLUMNS:
             local_time = values.where(values.str.fullmatch(TLC_TIMESTAMP, na=False))
             converted = pd.to_datetime(local_time, format="ISO8601", errors="coerce")
-            output_type = pa.timestamp("ns")
         elif name in FLAG_COLUMNS:
             converted = values.map({"Y": 1, "N": 0})
             output_type = pa.uint8()
@@ -132,14 +138,15 @@ def _standardize_batch(batch: pa.RecordBatch, rows_from_2024: int = 0) -> pa.Rec
             output_type = pa.float64()
 
         conversion_ok &= missing | converted.notna().to_numpy()
-        names.append(output_name)
-        arrays.append(pa.array(converted, type=output_type, from_pandas=True))
+        if name not in TIMESTAMP_COLUMNS:
+            names.append(output_name)
+            arrays.append(pa.array(converted, type=output_type, from_pandas=True))
+            continue
 
-        if name in TIMESTAMP_COLUMNS:
-            for part in TIMESTAMP_PARTS:
-                part_type = pa.int16() if part == "year" else pa.int8()
-                names.append(f"{name}_{part}")
-                arrays.append(pa.array(getattr(converted.dt, part), type=part_type, from_pandas=True))
+        for part in TIMESTAMP_PARTS:
+            part_type = pa.int16() if part == "year" else pa.int8()
+            names.append(f"{name}_{part}")
+            arrays.append(pa.array(getattr(converted.dt, part), type=part_type, from_pandas=True))
 
     names.append(CONVERSION_OK)
     arrays.append(pa.array(conversion_ok.astype(np.uint8), type=pa.uint8()))
