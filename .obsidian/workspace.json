@@ -11,12 +11,14 @@
             "id": "6a7ed6e0bdbb18fd",
             "type": "leaf",
             "state": {
-              "type": "excalidraw",
+              "type": "markdown",
               "state": {
-                "file": "phase 2/obsidians/phase2_dataAnalysis.excalidraw.md"
+                "file": "phase 2/obsidians/phase2_reportSummary.md",
+                "mode": "source",
+                "source": false
               },
-              "icon": "excalidraw-icon",
-              "title": "phase2_dataAnalysis.excalidraw"
+              "icon": "lucide-file",
+              "title": "phase2_reportSummary"
             }
           }
         ]
@@ -189,8 +191,9 @@
   },
   "active": "6a7ed6e0bdbb18fd",
   "lastOpenFiles": [
-    "phase 2/obsidians/attachment/Pasted image 20261117190854.png",
+    "Pasted image 20261124182402.png",
     "phase 2/obsidians/phase2_dataAnalysis.excalidraw.md",
+    "phase 2/obsidians/attachment/Pasted image 20261117190854.png",
     "Pasted image 20261117190854.png",
     "obsidians/phase2_dataAnalysis.excalidraw.md",
     "obsidians/attachment/Pasted image 20261117190854.png",
