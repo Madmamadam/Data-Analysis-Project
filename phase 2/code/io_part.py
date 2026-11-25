@@ -6,6 +6,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 
+import numpy as np
 import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -42,6 +43,18 @@ def read_parquet_batches(path: Path, chunk_rows: int, *, columns: list[str] | No
     with pq.ParquetFile(path) as source:
         footer = source.metadata.metadata or {}
         yield source.schema_arrow, footer, source.iter_batches(batch_size=chunk_rows, columns=columns)
+
+
+def numeric_batch_matrix(batch: pa.RecordBatch) -> np.ndarray:
+    """Copy ordered Arrow columns into a contiguous float32 matrix for a model."""
+    matrix = np.empty((batch.num_rows, batch.num_columns), dtype=np.float32)
+    for index, column in enumerate(batch.columns):
+        if column.null_count:
+            raise ValueError(f"Input column {batch.schema.names[index]!r} contains nulls.")
+        matrix[:, index] = column.to_numpy(zero_copy_only=False)
+    if not np.isfinite(matrix).all():
+        raise ValueError("Model inputs must be finite float32 values.")
+    return matrix
 
 
 @contextmanager

@@ -7,12 +7,14 @@ import merge_part
 import standardize_part
 
 
-def main(*, cluster: bool = False) -> None:
-    """Prepare full and training data and optionally cluster with the pretrained encoder."""
+def main(*, embed: bool = False, cluster: bool = False) -> None:
+    """Prepare trip inputs, optionally train an encoder, and optionally cluster the embeddings."""
+    encoder = None
     if cluster:
         import clustring_step
 
-        encoder = clustring_step.load_encoder(config.CLUSTER_ENCODER_PATH)
+        if not embed:
+            encoder = clustring_step.load_encoder(config.CLUSTER_ENCODER_PATH)
 
     merged_path = merge_part.merge_csvs(config.RAW_DIR, config.MERGED_PARQUET, config.REUSE_MERGED_PARQUET)
     working_path = standardize_part.standardize_parquet(
@@ -21,12 +23,16 @@ def main(*, cluster: bool = False) -> None:
     featured_path = feature_engineering_step.add_features(
         working_path, reuse_existing=config.REUSE_FEATURE_ENGINEERING, merged_path=merged_path
     )
-    full, training = embedding_step.main(featured_path, reuse_existing=config.REUSE_PREEMBEDDING)
+    full, training = embedding_step.main(
+        featured_path, reuse_existing=config.REUSE_PREEMBEDDING, merged_path=merged_path, preembedding_only=not embed,
+    )
     if cluster:
         clustring_step.run_clustering(training, full, encoder=encoder)
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=main.__doc__)
-    parser.add_argument("--cluster", action="store_true", help="Run clustering after preparing preembedding inputs")
-    main(cluster=parser.parse_args().cluster)
+    parser.add_argument("--embed", action="store_true", help="Train the autoencoder and write embeddings")
+    parser.add_argument("--cluster", action="store_true", help="Cluster generated embeddings or use a supplied encoder")
+    args = parser.parse_args()
+    main(embed=args.embed, cluster=args.cluster)

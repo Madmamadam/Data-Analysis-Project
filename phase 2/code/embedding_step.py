@@ -1,7 +1,8 @@
-"""Prepare numerical Parquet inputs for the embedding model."""
+"""Prepare numerical inputs and train an autoencoder for trip embeddings."""
 
+import argparse
 import json
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from hashlib import sha256
 from math import sqrt
 from pathlib import Path
@@ -152,7 +153,7 @@ def _cache_matches(path: Path, expected: dict[bytes, bytes]) -> bool:
     return SCALERS_METADATA in metadata and all(metadata.get(key) == value for key, value in expected.items())
 
 
-def main(
+def prepare_preembedding(
     working_path: Path = config.WORKING_PARQUET,
     training_path: Path | None = None,
     *,
@@ -217,5 +218,34 @@ def main(
     return full_output, training_output
 
 
+def main(
+    working_path: Path = config.WORKING_PARQUET,
+    training_path: Path | None = None,
+    *,
+    rules_path: Path = config.PREEMBEDDING_RULES,
+    reuse_existing: bool = config.REUSE_PREEMBEDDING,
+    merged_path: Path | None = None,
+    preembedding_only: bool = False,
+    settings: config.EmbeddingSettings = config.EMBEDDING,
+) -> tuple[Path, Path]:
+    """Prepare both Parquets and optionally return their trained embeddings."""
+    full, training = prepare_preembedding(working_path, training_path, rules_path=rules_path, reuse_existing=reuse_existing)
+    if preembedding_only:
+        return full, training
+
+    from autoencoder_part import train_and_embed
+
+    merged_path = merged_path or working_path.with_name(config.MERGED_PARQUET.name)
+    return train_and_embed(full, training, merged_path, settings=settings)
+
+
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--preembedding-only", action="store_true", help="Write scaled features only")
+    parser.add_argument("--device", default=config.EMBEDDING.device, help="PyTorch device for training")
+    parser.add_argument("--time-limit", type=float, default=config.EMBEDDING.time_limit_seconds, help="Training limit in seconds")
+    args = parser.parse_args()
+    main(
+        preembedding_only=args.preembedding_only,
+        settings=replace(config.EMBEDDING, device=args.device, time_limit_seconds=args.time_limit),
+    )

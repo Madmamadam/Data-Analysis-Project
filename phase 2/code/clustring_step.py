@@ -81,6 +81,11 @@ def _validate_inputs(training: pq.ParquetFile, full: pq.ParquetFile, settings: c
             if not (pa.types.is_floating(field.type) or pa.types.is_integer(field.type)):
                 raise ValueError(f"Input column {field.name!r} must be numeric.")
 
+    training_encoder = (training.metadata.metadata or {}).get(config.EMBEDDING_ENCODER_HASH)
+    full_encoder = (full.metadata.metadata or {}).get(config.EMBEDDING_ENCODER_HASH)
+    if training_encoder != full_encoder:
+        raise ValueError("Full and training embeddings must come from the same encoder.")
+
     required = settings.training_rows + settings.evaluation_rows
     if training.metadata.num_rows < required:
         raise ValueError(f"The training Parquet needs {required:,} rows for disjoint samples.")
@@ -89,14 +94,7 @@ def _validate_inputs(training: pq.ParquetFile, full: pq.ParquetFile, settings: c
 
 
 def _embed(batch: pa.RecordBatch, encoder: Encoder | None) -> np.ndarray:
-    features = np.empty((batch.num_rows, batch.num_columns), dtype=np.float32)
-    for index, column in enumerate(batch.columns):
-        if column.null_count:
-            raise ValueError(f"Input column {batch.schema.names[index]!r} contains nulls.")
-        features[:, index] = column.to_numpy(zero_copy_only=False)
-    if not np.isfinite(features).all():
-        raise ValueError("Clustering inputs must be finite float32 values.")
-
+    features = io_part.numeric_batch_matrix(batch)
     if encoder is None:
         return features
     embeddings = np.ascontiguousarray(encoder(features), dtype=np.float32)

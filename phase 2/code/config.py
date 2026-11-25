@@ -7,8 +7,10 @@ REUSE_MERGED_PARQUET = True and support_reuse  # Set to False to rebuild the mer
 REUSE_STANDARDIZED_PARQUET = True and support_reuse  # Set to False to standardize the merge again.
 REUSE_FEATURE_ENGINEERING = False and support_reuse   # Set to False to rebuild the features and interval table.
 REUSE_PREEMBEDDING = True and support_reuse  # Reuse scaled files when the inputs and rules match.
+REUSE_EMBEDDING = True and support_reuse  # Reuse the encoder and embeddings for matching inputs and settings.
 CHUNK_ROWS = 100_000
 ROWS_2024_METADATA = b"tlc_rows_from_2024"
+EMBEDDING_ENCODER_HASH = b"tlc_embedding_encoder_sha256"
 
 CODE_DIR = Path(__file__).resolve().parent
 RAW_DIR = CODE_DIR / "raw_datas"
@@ -23,8 +25,30 @@ WORKING_PARQUET = TEMP_DIR / "working.parquet"
 TRAINING_PARQUET = TEMP_DIR / "training.parquet"
 PREEMBEDDING_PARQUET = TEMP_DIR / "preembedding.parquet"
 PREEMBEDDING_TRAINING_PARQUET = TEMP_DIR / "preembedding_training.parquet"
+EMBEDDING_OUTPUT_DIR = TEMP_DIR / "embedding"
 CLUSTER_ENCODER_PATH = CODE_DIR / "requirements" / "encoder.pt"
 CLUSTER_OUTPUT_DIR = TEMP_DIR / "clustering"
+
+
+@dataclass(frozen=True)
+class EmbeddingSettings:
+    hidden_dims: tuple[int, ...] = (32, 16)
+    embedding_dim: int = 6
+    negative_slope: float = 0.01
+    batch_size: int = 16_384
+    learning_rate: float = 1e-3
+    max_epochs: int = 8
+    patience: int = 2
+    min_delta: float = 1e-4
+    time_limit_seconds: float = 240.0
+    validation_rows: int = 32_768
+    seed: int = 42
+    device: str = "cpu"
+    mixed_precision: bool = True
+    cpu_threads: int = 4
+
+
+EMBEDDING = EmbeddingSettings()
 
 
 @dataclass(frozen=True)
