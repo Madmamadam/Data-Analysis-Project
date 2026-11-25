@@ -1,5 +1,5 @@
 # Version 2.0
-"""Plot pickup waits, monthly license shares, and origin–destination flows.
+"""Plot pickup volume, pickup waits, license shares, and origin–destination flows.
 
 Run this module after main.py to save the plots in output/. The heatmaps use
 all sampled trips as their denominator. The license charts show the individual
@@ -179,6 +179,68 @@ def _save_wait_density(
     output_path.parent.mkdir(parents=True, exist_ok=True)
     figure.savefig(output_path, dpi=180)
     print(f"Saved pickup wait plot to {output_path}\n{coverage}")
+
+
+def plot_average_trips_by_pickup_hour(
+    working_path: Path = config.WORKING_PARQUET,
+    output_path: Path = config.CODE_DIR / "output" / "average_trips_by_pickup_hour.png",
+) -> Path:
+    """Plot sampled trips by local pickup hour, averaged over calendar days."""
+    date_parts = ["year", "month", "day"]
+    parts = [*date_parts, "hour"]
+    columns = [f"pickup_datetime_{part}" for part in parts]
+    hourly_counts = np.zeros(24, dtype=np.int64)
+    date_ranges = []
+    total_trips = 0
+
+    with io_part.read_parquet_batches(
+        working_path, config.CHUNK_ROWS, columns=columns
+    ) as (schema, _, batches):
+        absent = sorted(set(columns).difference(schema.names))
+        if absent:
+            raise ValueError(f"Missing pickup timestamp fields in {working_path}: {', '.join(absent)}")
+        for batch in batches:
+            total_trips += batch.num_rows
+            pickup = batch.to_pandas()[columns].set_axis(parts, axis=1)
+            dates = pd.to_datetime(pickup[date_parts], errors="coerce")
+            valid = dates.notna() & pickup["hour"].between(0, 23)
+            valid_dates = dates[valid]
+            if valid_dates.empty:
+                continue
+            date_ranges.append((valid_dates.min(), valid_dates.max()))
+            hours = pickup.loc[valid, "hour"].to_numpy(dtype=int)
+            hourly_counts += np.bincount(hours, minlength=24)
+
+    if not date_ranges:
+        raise ValueError(f"No valid pickup dates and hours in {working_path}")
+    first_day = min(start for start, _ in date_ranges)
+    last_day = max(end for _, end in date_ranges)
+    day_count = (last_day - first_day).days + 1
+    averages = hourly_counts / day_count
+
+    figure = Figure(figsize=(10, 4.8))
+    axes = figure.subplots()
+    figure.subplots_adjust(left=0.10, right=0.97, bottom=0.23, top=0.88)
+    hours = np.arange(24)
+    axes.bar(hours, averages, color="#146b83", width=0.8)
+    axes.set_title("Average trips by pickup hour", loc="left", fontsize=15, fontweight="bold")
+    axes.set_xlabel("Pickup hour (local time)")
+    axes.set_ylabel("Average sampled trips")
+    axes.set_xticks(hours, [f"{hour:02d}" for hour in hours], fontsize=9)
+    axes.yaxis.set_major_formatter(FuncFormatter(lambda value, _: f"{value:,.6g}"))
+    axes.set_axisbelow(True)
+    axes.grid(axis="y", alpha=0.25)
+
+    coverage = f"Average across {day_count:,} calendar days  |  {first_day:%b %d, %Y} to {last_day:%b %d, %Y}"
+    excluded = total_trips - hourly_counts.sum()
+    if excluded:
+        coverage += f"  |  {excluded:,} trips missing a valid pickup time"
+    figure.text(0.10, 0.055, coverage, fontsize=9, color="#475569")
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    figure.savefig(output_path, dpi=180)
+    print(f"Saved average trips by pickup hour to {output_path}")
+    return output_path
 
 
 def _iter_license_trips(
@@ -559,6 +621,7 @@ def plot_origin_destination_flows(
 
 
 if __name__ == "__main__":
+    plot_average_trips_by_pickup_hour()
     plot_pickup_waits(total_output_path=config.CODE_DIR / "output" / "request_to_pickup_wait.png")
     plot_license_monthly_share(UBER_LICENSE)
     plot_hv0005_monthly_share()
