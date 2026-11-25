@@ -23,6 +23,20 @@ def read_csv_chunks(path: Path, chunk_rows: int):
     return pd.read_csv(path, encoding="utf-8-sig", chunksize=chunk_rows, dtype=str, keep_default_na=False)
 
 
+def file_signature(path: Path) -> bytes:
+    """Identify the current file version using its filesystem metadata."""
+    stat = path.stat()
+    return f"{stat.st_dev}:{stat.st_ino}:{stat.st_size}:{stat.st_mtime_ns}".encode("ascii")
+
+
+def cached_parquet_metadata(path: Path) -> dict[bytes, bytes] | None:
+    """Read a cache footer without loading rows. Return None for a missing or invalid file."""
+    try:
+        return pq.read_metadata(path).metadata or {}
+    except (FileNotFoundError, pa.ArrowInvalid):
+        return None
+
+
 @contextmanager
 def read_parquet_batches(path: Path, chunk_rows: int, *, columns: list[str] | None = None):
     with pq.ParquetFile(path) as source:

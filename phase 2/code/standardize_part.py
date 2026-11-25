@@ -11,6 +11,8 @@ import io_part
 CONGESTION_FEE = "cbd_congestion_fee"
 CONVERSION_OK = "unit_conversion_ok"
 STANDARDIZED_METADATA = b"tlc_unit_conversion"
+STANDARDIZATION_VERSION = b"1"
+MERGED_INPUT_METADATA = b"tlc_standardization_input"
 LICENSE_COLUMN = "hvfhs_license_num"
 UBER_LICENSE = "HV0003"
 IS_UBER_COLUMN = "is Uber"
@@ -161,10 +163,20 @@ def _standardize_batch(batch: pa.RecordBatch, rows_from_2024: int = 0) -> pa.Rec
     return pa.RecordBatch.from_arrays(arrays, names=names)
 
 
-def standardize_parquet(merged_path: Path, working_path: Path) -> Path:
-    """Read the raw merge in batches and write a separate standardized Parquet."""
-    if merged_path == working_path:
+def standardize_parquet(merged_path: Path, working_path: Path, *, reuse_existing: bool = False) -> Path:
+    """Write a standardized Parquet or reuse one from the current raw merge."""
+    if merged_path.resolve() == working_path.resolve():
         raise ValueError("Choose different paths for the merged and standardized Parquet.")
+
+    merged_signature = io_part.file_signature(merged_path)
+    if reuse_existing:
+        cached = io_part.cached_parquet_metadata(working_path) or {}
+        if (
+            cached.get(STANDARDIZED_METADATA) == STANDARDIZATION_VERSION
+            and cached.get(MERGED_INPUT_METADATA) == merged_signature
+        ):
+            print(f"Reusing standardized Parquet: {working_path}")
+            return working_path
 
     with io_part.read_parquet_batches(merged_path, config.CHUNK_ROWS) as (raw_schema, footer, batches):
         metadata = dict(raw_schema.metadata or {})
@@ -178,7 +190,8 @@ def standardize_parquet(merged_path: Path, working_path: Path) -> Path:
         if len(schema.names) != len(set(schema.names)):
             raise ValueError("A source column conflicts with a standardized column name.")
         metadata.pop(config.ROWS_2024_METADATA, None)
-        metadata[STANDARDIZED_METADATA] = b"1"
+        metadata[STANDARDIZED_METADATA] = STANDARDIZATION_VERSION
+        metadata[MERGED_INPUT_METADATA] = merged_signature
         schema = schema.with_metadata(metadata)
 
         with io_part.write_parquet(working_path, schema) as writer:
@@ -186,5 +199,7 @@ def standardize_parquet(merged_path: Path, working_path: Path) -> Path:
                 rows_from_2024 = min(rows_left_from_2024, batch.num_rows)
                 writer.write_batch(_standardize_batch(batch, rows_from_2024))
                 rows_left_from_2024 -= rows_from_2024
+            if merged_signature != io_part.file_signature(merged_path):
+                raise RuntimeError(f"{merged_path} changed during standardization. Run the pipeline again.")
     print(f"Standardized Parquet saved: {working_path}")
     return working_path
