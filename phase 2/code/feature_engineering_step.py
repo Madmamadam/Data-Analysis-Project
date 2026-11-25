@@ -206,7 +206,7 @@ def add_features(
     if interval_path is None:
         interval_path = working_path.with_name("trip_counts_15min.parquet")
     if training_path is None:
-        training_path = working_path.with_name("training.parquet")
+        training_path = working_path.with_name(config.TRAINING_PARQUET.name)
     if zone_shares_path is None:
         zone_shares_path = working_path.with_name("zone_trip_shares.csv")
     if merged_path is None:
