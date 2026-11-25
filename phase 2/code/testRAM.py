@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import pandas as pd
+from console import print_status
 
 data_dir = Path(__file__).resolve().parent / "raw_datas"
 
@@ -15,7 +16,7 @@ df = pd.concat(
     ignore_index=True,
 )
 
-print(f"بارگذاری کامل شد. {len(df):,} ردیف در RAM است.")
+print_status(f"بارگذاری کامل شد. {len(df):,} ردیف در RAM است.")
 
 while input("برای خروج 1 را وارد کن و Enter بزن. ").strip() != "1":
     pass

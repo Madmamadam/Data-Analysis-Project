@@ -14,6 +14,7 @@ from pyproj import CRS, Transformer
 from shapely.geometry import Point, shape
 
 from config import TAXI_ZONE_LOOKUP
+from console import print_status
 
 
 BOUNDARY_URL = "https://d37ci6vzurychx.cloudfront.net/misc/taxi_zones.zip"
@@ -179,8 +180,8 @@ def main() -> None:
     else:
         write_lookup(TAXI_ZONE_LOOKUP, rows, coordinates, airport_flags)
         check_lookup(read_lookup(TAXI_ZONE_LOOKUP), coordinates, airport_flags)
-    print(f"Verified {len(coordinates)} points inside their TLC boundaries. IDs 264 and 265 have blank coordinates.")
-    print(f"Verified is_airport for all {len(airport_flags)} lookup rows. {sum(airport_flags.values())} airport zones.")
+    print_status(f"Verified {len(coordinates)} points inside their TLC boundaries. IDs 264 and 265 have blank coordinates.")
+    print_status(f"Verified is_airport for all {len(airport_flags)} lookup rows. {sum(airport_flags.values())} airport zones.")
 
 
 if __name__ == "__main__":

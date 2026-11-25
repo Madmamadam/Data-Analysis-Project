@@ -12,6 +12,7 @@ import pyarrow.parquet as pq
 
 import config
 import io_part
+from console import print_status
 from feature_engineering_step import VALIDATION_START_METADATA
 
 PASS_THROUGH = -1
@@ -161,8 +162,8 @@ def main(
     """Fit on the training subset and write full and training preembedding Parquets."""
     if training_path is None:
         training_path = working_path.with_name(config.TRAINING_PARQUET.name)
-    full_output = working_path.with_name("preembedding.parquet")
-    training_output = working_path.with_name("preembedding_training.parquet")
+    full_output = working_path.with_name(config.PREEMBEDDING_PARQUET.name)
+    training_output = working_path.with_name(config.PREEMBEDDING_TRAINING_PARQUET.name)
     paths = (working_path, training_path, rules_path, full_output, training_output)
     if len({path.resolve() for path in paths}) != len(paths):
         raise ValueError("Choose distinct paths for the preembedding inputs and outputs.")
@@ -182,7 +183,7 @@ def main(
         and _cache_matches(full_output, full_metadata)
         and _cache_matches(training_output, training_metadata)
     ):
-        print(f"Reusing preembedding data: {full_output} and {training_output}")
+        print_status(f"Reusing preembedding data: {full_output} and {training_output}")
         return full_output, training_output
 
     with pq.ParquetFile(working_path) as working, pq.ParquetFile(training_path) as training:
@@ -191,7 +192,7 @@ def main(
         if cutoff != (training.metadata.metadata or {}).get(VALIDATION_START_METADATA):
             raise ValueError("Working and training Parquets must have the same validation cutoff.")
 
-        print(f"Fitting preembedding scales on {training.metadata.num_rows:,} training rows", flush=True)
+        print_status(f"Fitting preembedding scales on {training.metadata.num_rows:,} training rows", flush=True)
         scalers = _fit_scalers(training, rules)
         parameters = {name: asdict(scaler) for name, scaler in scalers.items()}
         fitted_metadata = {SCALERS_METADATA: json.dumps(parameters, allow_nan=False).encode("utf-8")}
@@ -211,8 +212,8 @@ def main(
             if rules_path.read_bytes() != rules_data:
                 raise RuntimeError("The preembedding rules changed during processing. Run the pipeline again.")
 
-        print(f"Saved {working.metadata.num_rows:,} rows with {len(rules)} preembedding features to {full_output}")
-        print(f"Saved {training.metadata.num_rows:,} preembedding training rows to {training_output}")
+        print_status(f"Saved {working.metadata.num_rows:,} rows with {len(rules)} preembedding features to {full_output}")
+        print_status(f"Saved {training.metadata.num_rows:,} preembedding training rows to {training_output}")
     return full_output, training_output
 
 

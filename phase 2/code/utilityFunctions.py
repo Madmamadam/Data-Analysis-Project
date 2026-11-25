@@ -19,6 +19,7 @@ import pandas as pd
 
 import config
 import io_part
+from console import print_status
 from standardize_part import (
     EVENT_OFFSET_COLUMNS,
     INTEGER_COLUMNS,
@@ -194,7 +195,7 @@ def _save_wait_density(
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     figure.savefig(output_path, dpi=180)
-    print(f"Saved pickup wait plot to {output_path}\n{coverage}")
+    print_status(f"Saved pickup wait plot to {output_path}\n{coverage}")
 
 
 def plot_average_trips_by_pickup_hour(
@@ -260,7 +261,7 @@ def plot_average_trips_by_pickup_hour(
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     figure.savefig(output_path, dpi=180)
-    print(f"Saved average trips by pickup hour to {output_path}")
+    print_status(f"Saved average trips by pickup hour to {output_path}")
     return output_path
 
 
@@ -376,7 +377,7 @@ def plot_license_monthly_share(
         output_path = config.CODE_DIR / "output" / f"{license_filename}_monthly_share.png"
     output_path.parent.mkdir(parents=True, exist_ok=True)
     figure.savefig(output_path, dpi=180)
-    print(f"Saved {license_label} monthly share plot to {output_path}")
+    print_status(f"Saved {license_label} monthly share plot to {output_path}")
     return output_path
 
 
@@ -535,7 +536,7 @@ def _save_od_heatmap(
     figure.text(0.20, 0.055, footer, fontsize=9, color="#475569")
     output_path.parent.mkdir(parents=True, exist_ok=True)
     figure.savefig(output_path, dpi=180)
-    print(f"Saved Lyft OD plot to {output_path}")
+    print_status(f"Saved Lyft OD plot to {output_path}")
 
 
 def _compact_trip_count(value: float) -> str:
@@ -635,7 +636,7 @@ def plot_origin_destination_flows(
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     figure.savefig(output_path, dpi=180, facecolor="white")
-    print(f"Saved origin-destination flow plot to {output_path}")
+    print_status(f"Saved origin-destination flow plot to {output_path}")
     return output_path
 
 

@@ -5,6 +5,7 @@ import pyarrow as pa
 
 import config
 import io_part
+from console import print_status
 
 INPUT_METADATA_PREFIX = b"tlc_merge_input:"
 INPUT_ORDER_METADATA = b"tlc_merge_input_order"
@@ -40,7 +41,7 @@ def merge_csvs(raw_dir: Path, merged_path: Path, reuse_existing: bool) -> Path:
     if reuse_existing:
         metadata = io_part.cached_parquet_metadata(merged_path)
         if metadata is not None and _inputs_match(sources, merged_path, metadata, input_order):
-            print(f"Reusing merged Parquet: {merged_path}")
+            print_status(f"Reusing merged Parquet: {merged_path}")
             return merged_path
 
     signatures = {_input_key(name): io_part.file_signature(path) for name, path in sources.items()}
@@ -53,7 +54,7 @@ def merge_csvs(raw_dir: Path, merged_path: Path, reuse_existing: bool) -> Path:
     rows_from_2024 = 0
     with io_part.write_parquet(merged_path, schema) as writer:
         for name, path in sources.items():
-            print(f"Reading {name}", flush=True)
+            print_status(f"Reading {name}", flush=True)
             with io_part.read_csv_chunks(path, config.CHUNK_ROWS) as chunks:
                 for chunk in chunks:
                     aligned = chunk.reindex(columns=columns, fill_value="")
@@ -71,5 +72,5 @@ def merge_csvs(raw_dir: Path, merged_path: Path, reuse_existing: bool) -> Path:
             INPUT_ORDER_METADATA: input_order,
             config.ROWS_2024_METADATA: str(rows_from_2024),
         })
-    print(f"Merged Parquet saved: {merged_path}")
+    print_status(f"Merged Parquet saved: {merged_path}")
     return merged_path

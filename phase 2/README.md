@@ -1,6 +1,6 @@
-# Phase 2 trip data preparation
+# Phase 2 trip data preparation and clustering
 
-This project prepares New York City for-hire vehicle trips from October 2024 through September 2026. It combines trips from all providers so they can be compared, with the most recent four pickup months reserved for validation.
+This project prepares New York City for-hire vehicle trips from October 2024 through September 2026. It combines trips from all providers and can group trips with similar booking conditions using a pretrained encoder. The four most recent pickup months are reserved during model selection.
 
 ## Run the pipeline
 
@@ -13,16 +13,25 @@ python .\code\main.py
 
 To move the pipeline, copy `code` with its `requirements` and `raw_data` or `raw_datas` subfolders. Run `main.py` by its full path from any directory. `code/config.py` lists the three CSV filenames.
 
-## Outputs in `code/temp_file`
+Progress messages start with the system's local time in 24-hour format, such as `[14:05:09]`.
 
-- `merged.parquet` preserves the source fields for chronological splits, traffic counts, and plots.
-- `working.parquet` encodes request minute, hour, weekday, and month with sine/cosine pairs. `request_to_on_scene_minutes`, `request_to_pickup_minutes`, and `request_to_dropoff_minutes` each store the signed difference from the request as fractional minutes. A missing or invalid timestamp produces `NULL` in each dependent cell.
-- `training.parquet` contains the same fields for pickups before June 1, 2026, the current cutoff.
-- `preembedding.parquet` and `preembedding_training.parquet` contain ordered `float32` model inputs for the full dataset and the training subset.
-- `trip_counts_15min.parquet` counts pickups and drop-offs by 15-minute interval. `zone_trip_shares.csv` gives each mapped zone's share of endpoints observed before the cutoff among training trips.
+## Cluster trips
 
-The working and training files use kilometers and minutes and include the `is Uber` and `unit_conversion_ok` fields. Taxi-zone features combine bundled coordinates and airport flags with computed endpoint shares. Missing or invalid zones have a validity flag of `0` and zero-filled location features.
+Supply a pretrained TorchScript encoder at `code/requirements/encoder.pt`. Its forward method takes the ordered preembedding features and returns one embedding vector per trip.
 
-Edit `code/requirements/preembedding_rules.json` to choose model inputs. Code `-1` passes values through, `-2` excludes the column, `1` standardizes it, and `2` standardizes rows where the named mask is `1`. The stage fits both types of scaling on training rows and fills missing or masked values with `0`. The default 19 inputs cover request time, booking flags, pickup geography, and previous-interval traffic.
+```powershell
+python -m pip install -r .\code\requirements\clustering_encoder_requirements.txt
+python .\code\main.py --cluster
+```
 
-Run `python .\code\utilityFunctions.py` to generate the plots in `code/output`. See `AGENT_GUIDE.txt` for the cache, feature, and taxi-zone lookup details.
+Run `python .\code\clustring_step.py` to use existing preembedding Parquets. With saved encoder outputs, use the base requirements and pass two Parquets with matching ordered numeric columns.
+
+```powershell
+python .\code\clustring_step.py --embeddings --training path\to\training.parquet --full path\to\full.parquet
+```
+
+MiniBatchKMeans compares nine K values over three seeds using 500,000 fit embeddings and a fixed, disjoint set of 10,000 for silhouette scoring. It selects K by the mean score and refits in batches on the full dataset. Each run saves the model, row-indexed assignments, and plot under `code/temp_file/clustering`. Edit `ClusteringSettings` in `code/config.py` to change the defaults.
+
+## Prepared data
+
+In `code/temp_file`, `merged.parquet` preserves the source fields. `working.parquet` adds request-time cycles, signed intervals, taxi-zone features, and traffic counts. `training.parquet` covers pickups before June 1, 2026. The two preembedding Parquets contain ordered `float32` inputs defined by `code/requirements/preembedding_rules.json`, with scales fitted on the training split. See `AGENT_GUIDE.txt` for feature and output details.

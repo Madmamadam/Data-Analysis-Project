@@ -18,6 +18,7 @@ import pyarrow.parquet as pq
 
 import config
 import io_part
+from console import print_status
 from standardize_part import (
     DROPOFF_TIMESTAMP,
     MERGED_INPUT_METADATA,
@@ -246,7 +247,7 @@ def add_features(
             and cached.get(TRAINING_FILE_METADATA) == io_part.file_signature(training_path)
             and all(field in source_schema for field in FEATURE_FIELDS)
         ):
-            print(f"Reusing engineered features and training data: {working_path}")
+            print_status(f"Reusing engineered features and training data: {working_path}")
             return working_path
 
     zones = _load_zone_lookup(lookup_data)
@@ -325,10 +326,10 @@ def add_features(
                 TRAINING_FILE_METADATA: io_part.file_signature(training_path),
             })
 
-    print(f"Saved {intervals.num_rows:,} trip-count intervals to {interval_path}")
-    print(f"Saved {training_count:,} training trips to {training_path}")
-    print(f"Zone trip shares: {zone_shares_path}")
-    print(f"Added taxi-zone and trip-count features to {working_path}")
+    print_status(f"Saved {intervals.num_rows:,} trip-count intervals to {interval_path}")
+    print_status(f"Saved {training_count:,} training trips to {training_path}")
+    print_status(f"Zone trip shares: {zone_shares_path}")
+    print_status(f"Added taxi-zone and trip-count features to {working_path}")
     return working_path
 
 

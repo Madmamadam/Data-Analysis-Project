@@ -7,6 +7,7 @@ import pyarrow as pa
 
 import config
 import io_part
+from console import print_status
 
 CONGESTION_FEE = "cbd_congestion_fee"
 CONVERSION_OK = "unit_conversion_ok"
@@ -229,7 +230,7 @@ def standardize_parquet(merged_path: Path, working_path: Path, *, reuse_existing
             cached.get(STANDARDIZED_METADATA) == STANDARDIZATION_VERSION
             and cached.get(MERGED_INPUT_METADATA) == merged_signature
         ):
-            print(f"Reusing standardized Parquet: {working_path}")
+            print_status(f"Reusing standardized Parquet: {working_path}")
             return working_path
 
     with io_part.read_parquet_batches(merged_path, config.CHUNK_ROWS) as (raw_schema, footer, batches):
@@ -255,5 +256,5 @@ def standardize_parquet(merged_path: Path, working_path: Path, *, reuse_existing
                 rows_left_from_2024 -= rows_from_2024
             if merged_signature != io_part.file_signature(merged_path):
                 raise RuntimeError(f"{merged_path} changed during standardization. Run the pipeline again.")
-    print(f"Standardized Parquet saved: {working_path}")
+    print_status(f"Standardized Parquet saved: {working_path}")
     return working_path
