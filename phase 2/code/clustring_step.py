@@ -6,6 +6,7 @@ from collections.abc import Callable, Iterator
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from random import Random
+from shutil import copyfile
 from tempfile import TemporaryDirectory
 from uuid import uuid4
 
@@ -24,6 +25,8 @@ import io_part
 from console import print_status
 
 Encoder = Callable[[np.ndarray], np.ndarray]
+SCORES_FILENAME = "silhouette_scores.png"
+CLUSTERING_METADATA = b"tlc_clustering"
 
 
 @dataclass(frozen=True)
@@ -176,22 +179,44 @@ def _evaluate(
     return results
 
 
-def _plot_scores(path: Path, candidates: list[_Candidate], winner: _Candidate, seeds: tuple[int, ...]) -> None:
+def _plot_k_selection(
+    path: Path, candidates: list[_Candidate], winner: _Candidate, seeds: tuple[int, ...],
+) -> None:
     figure = Figure(figsize=(9, 5), layout="constrained")
     axes = figure.subplots()
     positions = np.arange(len(candidates))
+    winning_position = next(index for index, result in enumerate(candidates) if result.k == winner.k)
+    axes.axvspan(winning_position - 0.36, winning_position + 0.36, color="#16766a", alpha=0.12, linewidth=0)
     for index, (seed, offset) in enumerate(zip(seeds, (-0.24, -0.12, 0.14), strict=True)):
         axes.scatter(
             positions + offset, [result.scores[index] for result in candidates], label=f"Seed {seed}", zorder=3,
         )
-    axes.plot(positions, [result.mean for result in candidates], "D-", color="black", label="Mean")
+    axes.plot(positions, [result.mean for result in candidates], "D-", color="#20262e", label="Mean of three seeds")
+    axes.scatter(winning_position, winner.mean, marker="D", color="#16766a", zorder=4)
     axes.set_xticks(positions, [str(result.k) for result in candidates])
-    axes.set(xlabel="Number of clusters (K)", ylabel="Silhouette score", title=f"Silhouette scores (selected K = {winner.k})")
+    axes.set(xlabel="Number of clusters (K)", ylabel="Silhouette score")
+    axes.set_title(f"Selected K = {winner.k}  |  Highest mean silhouette score = {winner.mean:.4f}", loc="left", pad=12)
     axes.grid(axis="y", alpha=0.25)
-    axes.legend()
+    figure.legend(loc="outside lower center", ncols=4, frameon=False)
     if any(result.mean is None for result in candidates):
         axes.set_xlabel("Number of clusters (K)\nOmitted points indicate undefined scores.")
-    figure.savefig(path, dpi=160)
+    figure.savefig(path, dpi=160, format="png")
+
+
+def plot_saved_k_selection(assignments_path: Path, output_path: Path) -> None:
+    """Regenerate the selection plot from an existing run's Parquet footer."""
+    if assignments_path.resolve() == output_path.resolve():
+        raise ValueError("Choose a plot destination distinct from the assignments Parquet.")
+    metadata = (pq.read_metadata(assignments_path).metadata or {}).get(CLUSTERING_METADATA)
+    if metadata is None:
+        raise ValueError("Use a cluster_assignments.parquet from a completed clustering run.")
+
+    run = json.loads(metadata)
+    candidates = [_Candidate(row["k"], tuple(row["scores"]), None) for row in run["scores"]]
+    winner = next(candidate for candidate in candidates if candidate.k == run["selected_k"])
+    with io_part.atomic_output_path(output_path) as staged:
+        _plot_k_selection(staged, candidates, winner, tuple(run["settings"]["seeds"]))
+    print_status(f"Saved K-selection plot to {output_path}")
 
 
 def _embedding_batches(
@@ -206,7 +231,7 @@ def _write_assignments(
 ) -> None:
     schema = pa.schema(
         [pa.field("row_index", pa.int64(), nullable=False), pa.field("cluster", pa.int32(), nullable=False)],
-        metadata={b"tlc_clustering": metadata},
+        metadata={CLUSTERING_METADATA: metadata},
     )
     row_start = 0
     with io_part.write_parquet(path, schema) as writer:
@@ -224,10 +249,13 @@ def run_clustering(
     *,
     encoder: Encoder | None = None,
     output_dir: Path = config.CLUSTER_OUTPUT_DIR,
+    plot_output: Path = config.CLUSTER_K_SELECTION_PLOT,
     settings: config.ClusteringSettings = config.CLUSTERING,
 ) -> Path:
     """Cluster saved embeddings or encode both Parquets with the supplied frozen encoder."""
     _validate_settings(settings)
+    if plot_output.resolve() in {training_path.resolve(), full_path.resolve()}:
+        raise ValueError("Choose a plot destination distinct from the clustering inputs.")
     signatures = {path: io_part.file_signature(path) for path in (training_path, full_path)}
     output_dir.mkdir(parents=True, exist_ok=True)
     run_dir = output_dir / f"run-{uuid4().hex}"
@@ -250,6 +278,7 @@ def run_clustering(
                 raise ValueError("No K has defined silhouette scores for all three seeds.")
             winner = max(eligible, key=lambda candidate: (candidate.mean, -candidate.k))
             print_status(f"Selected K={winner.k} (mean silhouette={winner.mean:.6f})", flush=True)
+            _plot_k_selection(stage / SCORES_FILENAME, candidates, winner, settings.seeds)
 
             model = _new_model(winner.k, settings.final_seed, settings, winner.centers)
             for pass_number in range(settings.final_passes):
@@ -272,13 +301,14 @@ def run_clustering(
                 stage / "cluster_assignments.parquet", model,
                 _embedding_batches(full, settings.batch_size, encoder), metadata,
             )
-            _plot_scores(stage / "silhouette_scores.png", candidates, winner, settings.seeds)
-
         if any(io_part.file_signature(path) != signature for path, signature in signatures.items()):
             raise RuntimeError("A clustering input changed during processing. Rerun clustering with stable inputs.")
-        stage.rename(run_dir)
+        with io_part.atomic_output_path(plot_output) as public_plot:
+            copyfile(stage / SCORES_FILENAME, public_plot)
+            stage.rename(run_dir)
 
     print_status(f"Saved clustering outputs to {run_dir}")
+    print_status(f"Saved K-selection plot to {plot_output}")
     return run_dir
 
 
@@ -289,8 +319,15 @@ def main() -> None:
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--encoder", type=Path, help="Pretrained TorchScript encoder path")
     mode.add_argument("--embeddings", action="store_true", help="Use precomputed embeddings in both Parquets")
-    parser.add_argument("--output-dir", type=Path, default=config.CLUSTER_OUTPUT_DIR, help="Parent for run outputs")
+    mode.add_argument("--plot-from-assignments", type=Path, help="Plot scores saved in a clustering assignments Parquet")
+    parser.add_argument("--output-dir", type=Path, help="Parent for clustering runs or the regenerated plot")
     args = parser.parse_args()
+    if args.plot_from_assignments is not None:
+        plot_output = config.CLUSTER_K_SELECTION_PLOT
+        if args.output_dir is not None:
+            plot_output = args.output_dir / plot_output.name
+        plot_saved_k_selection(args.plot_from_assignments, plot_output)
+        return
     if args.embeddings and (args.training is None or args.full is None):
         parser.error("--embeddings requires both --training and --full Parquets")
 
@@ -299,7 +336,7 @@ def main() -> None:
         args.training or config.PREEMBEDDING_TRAINING_PARQUET,
         args.full or config.PREEMBEDDING_PARQUET,
         encoder=encoder,
-        output_dir=args.output_dir,
+        output_dir=args.output_dir or config.CLUSTER_OUTPUT_DIR,
     )
 
 

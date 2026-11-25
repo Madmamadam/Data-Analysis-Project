@@ -28,6 +28,7 @@ PREEMBEDDING_TRAINING_PARQUET = TEMP_DIR / "preembedding_training.parquet"
 EMBEDDING_OUTPUT_DIR = TEMP_DIR / "embedding"
 CLUSTER_ENCODER_PATH = CODE_DIR / "requirements" / "encoder.pt"
 CLUSTER_OUTPUT_DIR = TEMP_DIR / "clustering"
+CLUSTER_K_SELECTION_PLOT = CODE_DIR / "output" / "clustering_k_selection.png"
 
 
 @dataclass(frozen=True)

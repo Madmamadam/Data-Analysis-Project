@@ -30,7 +30,17 @@ Pass `--embed --cluster` to train the encoder and cluster its outputs in one run
 python .\code\clustring_step.py --embeddings --training .\code\temp_file\embedding\embeddings_training.parquet --full .\code\temp_file\embedding\embeddings.parquet
 ```
 
-MiniBatchKMeans selects K by mean silhouette score and refits on the full dataset in batches. It saves the model, assignments, and plot under `code/temp_file/clustering`. To use an existing TorchScript encoder, install `clustering_encoder_requirements.txt`, place the model at `code/requirements/encoder.pt`, and run `main.py --cluster`.
+MiniBatchKMeans evaluates each K with three seeds using 500,000 fit embeddings and a fixed, disjoint 10,000-row scoring sample. It selects the highest mean silhouette score and refits on the full dataset in batches. `code/output/clustering_k_selection.png` shows all three scores, their mean, and the winning K. Each run also keeps its plot, model, and assignments under `code/temp_file/clustering`. To redraw the plot from saved scores, pass `--plot-from-assignments PATH` to `clustring_step.py` with the run's `cluster_assignments.parquet`.
+
+To use an existing TorchScript encoder, install `clustering_encoder_requirements.txt`, place the model at `code/requirements/encoder.pt`, and run `main.py --cluster`.
+
+## Plot training clusters
+
+```powershell
+python .\code\visualization_step.py
+```
+
+After clustering saved embeddings, this writes `code/output/training_clusters_pca.png` using the latest completed run. It fits two-component PCA on all training embeddings and colors a reproducible sample of up to 100,000 trips by saved cluster label. Use `--max-points 0` to draw every trip. Select another run with `--assignments PATH`. For clustering run directly on preembedding features, pass `--encoder PATH` with the same TorchScript model. The dependencies are in `code/requirements/requirements.txt`, with PyTorch in `clustering_encoder_requirements.txt` for `--encoder`.
 
 ## Prepared data
 
