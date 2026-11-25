@@ -1,10 +1,11 @@
 from pathlib import Path
 
 # Reuse valid outputs. Rebuilding an upstream step invalidates downstream reuse.
-REUSE_MERGED_PARQUET = True  # Set to False to rebuild the merge from the CSV files.
-REUSE_STANDARDIZED_PARQUET = True  # Set to False to standardize the merge again.
-REUSE_FEATURE_ENGINEERING = False   # Set to False to rebuild the features and interval table.
-REUSE_PREEMBEDDING = True  # Reuse scaled files when the inputs and rules match.
+support_reuse = False  # Set to False to rebuild all steps from the raw CSV files.
+REUSE_MERGED_PARQUET = True and support_reuse  # Set to False to rebuild the merge from the CSV files.
+REUSE_STANDARDIZED_PARQUET = True and support_reuse  # Set to False to standardize the merge again.
+REUSE_FEATURE_ENGINEERING = False and support_reuse   # Set to False to rebuild the features and interval table.
+REUSE_PREEMBEDDING = True and support_reuse  # Reuse scaled files when the inputs and rules match.
 CHUNK_ROWS = 100_000
 ROWS_2024_METADATA = b"tlc_rows_from_2024"
 
