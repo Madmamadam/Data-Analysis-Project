@@ -11,7 +11,7 @@ import io_part
 CONGESTION_FEE = "cbd_congestion_fee"
 CONVERSION_OK = "unit_conversion_ok"
 STANDARDIZED_METADATA = b"tlc_unit_conversion"
-STANDARDIZATION_VERSION = b"1"
+STANDARDIZATION_VERSION = b"3"
 MERGED_INPUT_METADATA = b"tlc_standardization_input"
 LICENSE_COLUMN = "hvfhs_license_num"
 UBER_LICENSE = "HV0003"
@@ -24,13 +24,18 @@ DROPPED_COLUMNS = {
     "_sample_source_row",
     "_sample_source_month",
 }
-TIMESTAMP_COLUMNS = {
-    "request_datetime",
-    "on_scene_datetime",
-    "pickup_datetime",
-    "dropoff_datetime",
+REQUEST_TIMESTAMP = "request_datetime"
+PICKUP_TIMESTAMP = "pickup_datetime"
+DROPOFF_TIMESTAMP = "dropoff_datetime"
+EVENT_OFFSET_COLUMNS = {
+    "on_scene_datetime": "request_to_on_scene_minutes",
+    PICKUP_TIMESTAMP: "request_to_pickup_minutes",
+    DROPOFF_TIMESTAMP: "request_to_dropoff_minutes",
 }
-TIMESTAMP_PARTS = ("year", "month", "day", "hour", "minute", "second")
+TIMESTAMP_COLUMNS = {REQUEST_TIMESTAMP, *EVENT_OFFSET_COLUMNS}
+# Each cycle starts at zero. Pandas numbers months starting at one.
+REQUEST_CYCLES = {"minute": (60, 0), "hour": (24, 0), "day_of_week": (7, 0), "month": (12, 1)}
+NANOSECONDS_PER_MINUTE = 60 * 10**9
 TLC_TIMESTAMP = (
     r"[0-9]{4}-[0-9]{2}-[0-9]{2}[ T][0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]{1,9})?"
 )
@@ -96,11 +101,50 @@ def parse_tlc_timestamp(values: pd.Series) -> pd.Series:
     return pd.to_datetime(local_time, format="ISO8601", errors="coerce")
 
 
+def raw_timestamps(batch: pa.RecordBatch, name: str) -> pd.Series:
+    """Read one local timestamp column from the raw merge."""
+    if name not in batch.schema.names:
+        return pd.Series(pd.NaT, index=pd.RangeIndex(batch.num_rows), dtype="datetime64[ns]")
+    values = pd.Series(batch.column(name).to_pandas(), dtype="string").str.strip()
+    return parse_tlc_timestamp(values)
+
+
+def minutes_between(start: pd.Series, end: pd.Series) -> np.ndarray:
+    """Subtract local timestamps as integer nanoseconds before converting to minutes."""
+    start_ns = start.to_numpy(dtype="datetime64[ns]").view(np.int64)
+    end_ns = end.to_numpy(dtype="datetime64[ns]").view(np.int64)
+    # The unsigned magnitude can hold even a difference beyond the signed int64 range.
+    elapsed_ns = np.maximum(start_ns, end_ns).view(np.uint64) - np.minimum(start_ns, end_ns).view(np.uint64)
+    minutes = elapsed_ns / NANOSECONDS_PER_MINUTE
+    minutes[end_ns < start_ns] *= -1
+    minutes[(start.isna() | end.isna()).to_numpy()] = np.nan
+    return minutes
+
+
+def _cycle_coordinates(period: int) -> np.ndarray:
+    """Return sine and cosine rounded to three decimal places."""
+    steps = np.arange(period)
+    angles = 2 * np.pi * steps / period
+    coordinates = np.column_stack((np.sin(angles), np.cos(angles)))
+
+    # Identify quarter-turns using integer arithmetic.
+    quarters, remainder = np.divmod(4 * steps, period)
+    on_axis = remainder == 0
+    axis_coordinates = np.array([[0.0, 1.0], [1.0, 0.0], [0.0, -1.0], [-1.0, 0.0]])
+    coordinates[on_axis] = axis_coordinates[quarters[on_axis]]
+    return np.round(coordinates, decimals=3)
+
+
+REQUEST_COORDINATES = {part: _cycle_coordinates(period) for part, (period, _) in REQUEST_CYCLES.items()}
+
+
 def _standardize_batch(batch: pa.RecordBatch, rows_from_2024: int = 0) -> pa.RecordBatch:
     """Convert known fields and flag rows where a nonempty value failed conversion."""
     names = []
     arrays = []
     conversion_ok = np.ones(batch.num_rows, dtype=bool)
+    missing_timestamp = pd.Series(pd.NaT, index=pd.RangeIndex(batch.num_rows), dtype="datetime64[ns]")
+    timestamps = dict.fromkeys(TIMESTAMP_COLUMNS, missing_timestamp)
 
     columns = list(zip(batch.schema.names, batch.columns))
     if CONGESTION_FEE not in batch.schema.names:
@@ -130,10 +174,14 @@ def _standardize_batch(batch: pa.RecordBatch, rows_from_2024: int = 0) -> pa.Rec
             arrays.append(pa.array(indicator, type=pa.bool_()))
             continue
 
-        output_name = name
         if name in TIMESTAMP_COLUMNS:
-            converted = parse_tlc_timestamp(values)
-        elif name in FLAG_COLUMNS:
+            timestamp = parse_tlc_timestamp(values)
+            conversion_ok &= missing | timestamp.notna().to_numpy()
+            timestamps[name] = timestamp
+            continue
+
+        output_name = name
+        if name in FLAG_COLUMNS:
             converted = values.map({"Y": 1, "N": 0})
             output_type = pa.uint8()
         elif name in INTEGER_COLUMNS:
@@ -148,15 +196,21 @@ def _standardize_batch(batch: pa.RecordBatch, rows_from_2024: int = 0) -> pa.Rec
             output_type = pa.float64()
 
         conversion_ok &= missing | converted.notna().to_numpy()
-        if name not in TIMESTAMP_COLUMNS:
-            names.append(output_name)
-            arrays.append(pa.array(converted, type=output_type, from_pandas=True))
-            continue
+        names.append(output_name)
+        arrays.append(pa.array(converted, type=output_type, from_pandas=True))
 
-        for part in TIMESTAMP_PARTS:
-            part_type = pa.int16() if part == "year" else pa.int8()
-            names.append(f"{name}_{part}")
-            arrays.append(pa.array(getattr(converted.dt, part), type=part_type, from_pandas=True))
+    request = timestamps[REQUEST_TIMESTAMP]
+    request_missing = request.isna().to_numpy()
+    for part, (_, offset) in REQUEST_CYCLES.items():
+        values = getattr(request.dt, part).to_numpy()
+        steps = np.where(request_missing, 0, values - offset).astype(np.intp)
+        sine, cosine = REQUEST_COORDINATES[part][steps].T
+        names.extend((f"request_{part}_sin", f"request_{part}_cos"))
+        arrays.extend((pa.array(sine, mask=request_missing), pa.array(cosine, mask=request_missing)))
+
+    for event, name in EVENT_OFFSET_COLUMNS.items():
+        names.append(name)
+        arrays.append(pa.array(minutes_between(request, timestamps[event]), type=pa.float64(), from_pandas=True))
 
     names.append(CONVERSION_OK)
     arrays.append(pa.array(conversion_ok.astype(np.uint8), type=pa.uint8()))

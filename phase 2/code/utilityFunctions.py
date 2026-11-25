@@ -20,20 +20,27 @@ import pandas as pd
 import config
 import io_part
 from standardize_part import (
+    EVENT_OFFSET_COLUMNS,
     INTEGER_COLUMNS,
     IS_UBER_COLUMN,
     LICENSE_COLUMN,
-    TIMESTAMP_PARTS,
+    PICKUP_TIMESTAMP,
+    REQUEST_TIMESTAMP,
     UBER_LICENSE,
     _parse_integer,
+    minutes_between,
     parse_tlc_timestamp,
+    raw_timestamps,
 )
 
-EVENTS = ("request_datetime", "on_scene_datetime", "pickup_datetime")
-EVENT_COLUMNS = [f"{event}_{part}" for event in EVENTS for part in TIMESTAMP_PARTS]
-REQUEST_WAIT = "request_to_on_scene_minutes"
+EVENTS = (REQUEST_TIMESTAMP, "on_scene_datetime", PICKUP_TIMESTAMP)
+TIMESTAMP_PARTS = ("year", "month", "day", "hour", "minute", "second")
+REQUEST_WAIT = EVENT_OFFSET_COLUMNS["on_scene_datetime"]
 PICKUP_WAIT = "on_scene_to_pickup_minutes"
-TOTAL_WAIT = "request_to_pickup_minutes"
+TOTAL_WAIT = EVENT_OFFSET_COLUMNS[PICKUP_TIMESTAMP]
+EVENT_COLUMNS = [
+    *EVENTS, REQUEST_WAIT, TOTAL_WAIT, *(f"{event}_{part}" for event in EVENTS for part in TIMESTAMP_PARTS),
+]
 PICKUP_YEAR = "pickup_datetime_year"
 PICKUP_MONTH = "pickup_datetime_month"
 OD_GROUPS = (
@@ -48,29 +55,41 @@ OD_GROUPS = (
 )
 
 
-def calculate_pickup_waits(frame: pd.DataFrame, *, include_total: bool = False) -> pd.DataFrame:
-    """Calculate signed minutes per trip from standardized timestamp components."""
-    timestamps = []
-    for event in EVENTS:
-        columns = [f"{event}_{part}" for part in TIMESTAMP_PARTS]
-        components = frame[columns].set_axis(TIMESTAMP_PARTS, axis=1)
-        complete = components.notna().all(axis=1)
-        # Arrow may deliver nullable integer columns as floats. Mask missing parts after assembly.
-        timestamp = pd.to_datetime(components.fillna(0).astype("int64"), errors="coerce")
-        timestamps.append(timestamp.where(complete))
+def _plot_timestamp(frame: pd.DataFrame, event: str) -> pd.Series:
+    if event in frame:
+        return parse_tlc_timestamp(frame[event].astype("string").str.strip())
+    columns = [f"{event}_{part}" for part in TIMESTAMP_PARTS]
+    if not set(columns).issubset(frame.columns):
+        return pd.Series(pd.NaT, index=frame.index, dtype="datetime64[ns]")
+    components = frame[columns].set_axis(TIMESTAMP_PARTS, axis=1)
+    complete = components.notna().all(axis=1)
+    # Arrow may deliver nullable integer columns as floats. Mask missing parts after assembly.
+    timestamp = pd.to_datetime(components.fillna(0).astype("int64"), errors="coerce")
+    return timestamp.where(complete)
 
-    request, on_scene, pickup = timestamps
+
+def calculate_pickup_waits(frame: pd.DataFrame, *, include_total: bool = False) -> pd.DataFrame:
+    """Calculate the signed durations used in the wait-time plots."""
+    if {REQUEST_WAIT, TOTAL_WAIT}.issubset(frame.columns):
+        before_arrival, total = frame[REQUEST_WAIT], frame[TOTAL_WAIT]
+        after_arrival = total - before_arrival
+    else:
+        request, on_scene, pickup = (_plot_timestamp(frame, event) for event in EVENTS)
+        before_arrival = minutes_between(request, on_scene)
+        after_arrival = minutes_between(on_scene, pickup)
+        total = minutes_between(request, pickup)
+
     waits = pd.DataFrame({
-        REQUEST_WAIT: (on_scene - request).dt.total_seconds() / 60,
-        PICKUP_WAIT: (pickup - on_scene).dt.total_seconds() / 60,
-    })
+        REQUEST_WAIT: before_arrival,
+        PICKUP_WAIT: after_arrival,
+    }, index=frame.index)
     if include_total:
-        waits[TOTAL_WAIT] = (pickup - request).dt.total_seconds() / 60
+        waits[TOTAL_WAIT] = total
     return waits
 
 
 def plot_pickup_waits(
-    working_path: Path = config.WORKING_PARQUET,
+    working_path: Path = config.MERGED_PARQUET,
     output_path: Path = config.CODE_DIR / "output" / "pickup_wait_times.png",
     *,
     total_output_path: Path | None = None,
@@ -90,11 +109,8 @@ def plot_pickup_waits(
     with io_part.read_parquet_batches(
         working_path, config.CHUNK_ROWS, columns=EVENT_COLUMNS
     ) as (schema, _, batches):
-        absent = sorted(set(EVENT_COLUMNS).difference(schema.names))
-        if absent:
-            raise ValueError(
-                f"Expected standardized timestamp columns in {working_path}. Missing {', '.join(absent)}"
-            )
+        if not set(EVENT_COLUMNS).intersection(schema.names):
+            raise ValueError(f"No request, on-scene, or pickup time fields in {working_path}")
         for batch in batches:
             waits = calculate_pickup_waits(batch.to_pandas(), include_total=include_total)
             complete = waits.dropna()
@@ -182,34 +198,39 @@ def _save_wait_density(
 
 
 def plot_average_trips_by_pickup_hour(
-    working_path: Path = config.WORKING_PARQUET,
+    working_path: Path = config.MERGED_PARQUET,
     output_path: Path = config.CODE_DIR / "output" / "average_trips_by_pickup_hour.png",
 ) -> Path:
     """Plot sampled trips by local pickup hour, averaged over calendar days."""
     date_parts = ["year", "month", "day"]
     parts = [*date_parts, "hour"]
-    columns = [f"pickup_datetime_{part}" for part in parts]
+    columns = [f"{PICKUP_TIMESTAMP}_{part}" for part in parts]
     hourly_counts = np.zeros(24, dtype=np.int64)
     date_ranges = []
     total_trips = 0
 
     with io_part.read_parquet_batches(
-        working_path, config.CHUNK_ROWS, columns=columns
+        working_path, config.CHUNK_ROWS, columns=[PICKUP_TIMESTAMP, *columns]
     ) as (schema, _, batches):
+        raw = PICKUP_TIMESTAMP in schema.names
         absent = sorted(set(columns).difference(schema.names))
-        if absent:
+        if not raw and absent:
             raise ValueError(f"Missing pickup timestamp fields in {working_path}: {', '.join(absent)}")
         for batch in batches:
             total_trips += batch.num_rows
-            pickup = batch.to_pandas()[columns].set_axis(parts, axis=1)
-            dates = pd.to_datetime(pickup[date_parts], errors="coerce")
-            valid = dates.notna() & pickup["hour"].between(0, 23)
+            if raw:
+                dates = raw_timestamps(batch, PICKUP_TIMESTAMP)
+                hours = dates.dt.hour
+            else:
+                pickup = batch.to_pandas()[columns].set_axis(parts, axis=1)
+                dates = pd.to_datetime(pickup[date_parts], errors="coerce")
+                hours = pickup["hour"]
+            valid = dates.notna() & hours.between(0, 23)
             valid_dates = dates[valid]
             if valid_dates.empty:
                 continue
-            date_ranges.append((valid_dates.min(), valid_dates.max()))
-            hours = pickup.loc[valid, "hour"].to_numpy(dtype=int)
-            hourly_counts += np.bincount(hours, minlength=24)
+            date_ranges.append((valid_dates.min().date(), valid_dates.max().date()))
+            hourly_counts += np.bincount(hours[valid].to_numpy(dtype=int), minlength=24)
 
     if not date_ranges:
         raise ValueError(f"No valid pickup dates and hours in {working_path}")
@@ -294,16 +315,14 @@ def plot_license_monthly_share(
     working_path: Path | None = None,
     output_path: Path | None = None,
 ) -> Path:
-    """Plot monthly shares using the Uber flag or the raw license codes by default."""
+    """Plot monthly shares using the raw merge by default."""
     license_codes = (license_code,) if isinstance(license_code, str) else license_code
     if not license_codes:
         raise ValueError("Provide at least one license code.")
     license_label = " + ".join(license_codes)
 
     if working_path is None:
-        working_path = (
-            config.WORKING_PARQUET if license_codes == (UBER_LICENSE,) else config.MERGED_PARQUET
-        )
+        working_path = config.MERGED_PARQUET
     year, month = PICKUP_YEAR, PICKUP_MONTH
     batch_counts = []
     trip_count = 0

@@ -45,15 +45,22 @@ def read_parquet_batches(path: Path, chunk_rows: int, *, columns: list[str] | No
 
 
 @contextmanager
-def write_parquet(path: Path, schema: pa.Schema):
-    """Replace the destination only after the Parquet has been written successfully."""
+def atomic_output_path(path: Path):
+    """Stage a file beside its destination and replace it after a successful write."""
     path.parent.mkdir(parents=True, exist_ok=True)
     with NamedTemporaryFile(dir=path.parent, suffix=".part", delete=False) as temp:
         temporary_path = Path(temp.name)
 
     try:
-        with pq.ParquetWriter(temporary_path, schema, compression="zstd") as writer:
-            yield writer
+        yield temporary_path
         temporary_path.replace(path)
     finally:
         temporary_path.unlink(missing_ok=True)
+
+
+@contextmanager
+def write_parquet(path: Path, schema: pa.Schema):
+    """Replace the destination only after the Parquet has been written successfully."""
+    with atomic_output_path(path) as temporary_path:
+        with pq.ParquetWriter(temporary_path, schema, compression="zstd") as writer:
+            yield writer
